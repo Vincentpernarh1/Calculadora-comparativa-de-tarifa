@@ -474,7 +474,6 @@ class Api:
         except Exception as e:
             return {'success': False, 'message': f'Ocorreu um erro: {e}'}
 
-    import re  # make sure this is at the top
 
     def get_filters_for_fluxo(self, fluxo_name):
         """
@@ -487,7 +486,109 @@ class Api:
         fluxo_path = os.path.join(self.base_folder, fluxo_name)
         all_melted_dfs = []
 
-        if 'FAIXA' in fluxo_name:  # Catch '02. FAIXA', 'FAIXA' etc.
+        # Replace the 'if 04. MILK RUN' block with this
+        if '04. MILK RUN' in fluxo_name:
+            for file_name in os.listdir(fluxo_path):
+                if not file_name.lower().endswith(('.xlsx', '.xls')) or file_name.startswith('~$'):
+                    continue
+                
+                file_path = os.path.join(fluxo_path, file_name)
+                try:
+                    full_df = pd.read_excel(file_path, header=None, engine='openpyxl', keep_default_na=False, na_values=[''])
+
+                    header_row_idx = -1
+                    faixa_col_idx = -1
+                    
+                    for r_idx in range(min(10, len(full_df))):
+                        row_as_str = full_df.iloc[r_idx].astype(str).str.strip().str.upper()
+                        matches = row_as_str[row_as_str == 'FAIXA KM']
+                        if not matches.empty:
+                            header_row_idx = r_idx
+                            faixa_col_idx = matches.index[0]
+                            break
+                    
+                    if header_row_idx == -1:
+                        print(f"Skipping file {file_name}: Could not find 'FAIXA KM' header.")
+                        continue
+
+                    rt_info_row_idx = header_row_idx - 1
+                    data_start_row_idx = header_row_idx + 1
+
+                    if rt_info_row_idx < 0 or data_start_row_idx >= len(full_df):
+                        print(f"Skipping file {file_name}: Invalid structure around 'FAIXA KM' header.")
+                        continue
+
+                    # FIX 1: Add .ffill() to carry over the trip type to all vehicles
+                    round_trip_info = full_df.iloc[rt_info_row_idx].ffill()
+                    vehicle_headers = full_df.iloc[header_row_idx]
+                    data_df = full_df.iloc[data_start_row_idx:]
+                    
+                    vehicle_col_indices = [
+                        idx for idx, val in enumerate(vehicle_headers)
+                        if idx > faixa_col_idx and pd.notna(val) and str(val).strip() != ""
+                    ]
+
+                    processed_rows = []
+                    for _, data_row in data_df.iterrows():
+                        faixa_km_str = str(data_row.iloc[faixa_col_idx]).strip()
+                        distancia_min = distancia_max = None
+
+                        match = re.search(r'(\d+)\s*(?:a|-|até)\s*(\d+)', faixa_km_str, re.IGNORECASE)
+                        if match:
+                            distancia_min, distancia_max = int(match.group(1)), int(match.group(2))
+                        else:
+                            match = re.search(r'acima de\s*(\d+)', faixa_km_str, re.IGNORECASE)
+                            if match:
+                                distancia_min, distancia_max = int(match.group(1)), float('inf')
+                            else:
+                                match = re.search(r'até\s*(\d+)', faixa_km_str, re.IGNORECASE)
+                                if match:
+                                    distancia_min, distancia_max = 0, int(match.group(1))
+
+                        if distancia_min is None:
+                            continue
+
+                        for col_idx in vehicle_col_indices:
+                            try:
+                                vehicle = vehicle_headers.iloc[col_idx]
+                                viagem = round_trip_info.iloc[col_idx]
+                                tarifa = data_row.iloc[col_idx]
+
+                                if pd.notna(tarifa) and str(tarifa).strip() not in ("", "nan") and pd.notna(vehicle) and pd.notna(viagem):
+                                    viagem_str = str(viagem).upper().strip()
+                                    if 'ROUND' in viagem_str:
+                                        viagem_code = 'RT'
+                                    elif 'ONE WAY' in viagem_str or 'OW' in viagem_str:
+                                        viagem_code = 'OW'
+                                    else:
+                                        viagem_code = viagem_str
+                                    
+                                    processed_rows.append({
+                                        'Nomeacao': 'N/A', 'Fornecedor': 'N/A', 'Origem': 'N/A',
+                                        'LocalColeta': 'N/A', 'Destino': 'N/A',
+                                        'DistanciaMin': distancia_min,
+                                        'DistanciaMax': distancia_max,
+                                        'Transportadora': self._parse_transporter_name(file_name),
+                                        'Veiculo': str(vehicle), 
+                                        'Viagem': viagem_code,
+                                        'Tarifa': tarifa, 'Chave': 'N/A & N/A'
+                                    })
+                            except Exception as inner_e:
+                                print(f"Error processing a vehicle column in {file_name}: {inner_e}")
+                                continue
+                        
+                    if processed_rows:
+                        all_melted_dfs.append(pd.DataFrame(processed_rows))
+
+                except Exception as e:
+                    print(f"Error processing file {file_path} for 'MILK RUN': {e}")
+                    continue
+
+                    
+
+
+# !------------------------------Faixa Condition -----------------------------------------!
+        elif 'FAIXA' in fluxo_name:  # Catch '02. FAIXA', 'FAIXA' etc.
             for file_name in os.listdir(fluxo_path):
                 if not file_name.lower().endswith(('.xlsx', '.xls')):
                     continue
@@ -593,7 +694,7 @@ class Api:
 
 
 
-
+# !------------------------------Direto and Linehaul contions and processing -----------------------------------------!
         else:
             # --- ORIGINAL Logic for '01', '03', etc. ---
             for file_name in os.listdir(fluxo_path):
@@ -685,10 +786,12 @@ class Api:
         
         return response
 
+   
+        
     def calculate_tariffs(self, params):
         """
-        Applies UI filters. For 'FAIXA' fluxos, it filters by distance range.
-        For others, it recalculates tariffs ('Regra de Três') if a new distance is given.
+        Applies UI filters. For 'FAIXA'/'MILK RUN' fluxos, it filters by distance range and 
+        calculates a final price. For others, it recalculates tariffs ('Regra de Três').
         """
         fluxo_name = params['fluxo']
         if not fluxo_name or fluxo_name not in self.fluxo_data:
@@ -715,6 +818,9 @@ class Api:
         if df.empty:
             return []
 
+        # --- Initialize new column ---
+        df['Tarifa Real'] = pd.NA
+
         # --- Distance-based logic ---
         try:
             new_distance = float(params.get('km_value'))
@@ -724,32 +830,61 @@ class Api:
             new_distance = None
 
         if new_distance:
-            # If it's a 'FAIXA' type, filter by the distance range
-            if 'FAIXA' in fluxo_name.upper():
-                if 'DistanciaMin' in df.columns and 'DistanciaMax' in df.columns:
-                    # Filter where the distance falls within the Min/Max range
-                    df = df[
-                        (df['DistanciaMin'].notna()) &
-                        (df['DistanciaMax'].notna()) &
-                        (df['DistanciaMin'] <= new_distance) &
-                        (df['DistanciaMax'] >= new_distance)
-                    ]
+            # This block handles any flow that uses distance ranges (FAIXA or MILK RUN)
+            if ('FAIXA' in fluxo_name.upper() or 'MILK RUN' in fluxo_name.upper()) and \
+            ('DistanciaMin' in df.columns and 'DistanciaMax' in df.columns):
+                
+                # Step 1: Find the correct row(s) based on the distance range
+                range_mask = (
+                    (df['DistanciaMin'].notna()) &
+                    (df['DistanciaMax'].notna()) &
+                    (df['DistanciaMin'] <= new_distance) &
+                    (df['DistanciaMax'] >= new_distance)
+                )
+                
+                # Step 2: Apply the correct calculation based on the specific flow type
+                if 'MILK RUN' in fluxo_name.upper():
+                    # For MILK RUN, Tarifa Real = distance * rate
+                    df.loc[range_mask, 'Tarifa Real'] = new_distance * df.loc[range_mask, 'Tarifa']
+                elif 'FAIXA' in fluxo_name.upper():
+                    # For FAIXA, Tarifa Real = the fixed rate from the range
+                    df.loc[range_mask, 'Tarifa Real'] = df.loc[range_mask, 'Tarifa']
+                    
+                # Step 3: Filter the DataFrame to only show the relevant row(s)
+                df = df[range_mask].copy()
             
-            # For other types, perform the "Rule of Three" calculation
+            # This block handles the "Rule of Three" flows
             elif 'Distancia' in df.columns:
                 calculable_mask = (df['Distancia'].notna()) & (df['Distancia'] > 0) & (df['Tarifa'].notna())
-                df.loc[calculable_mask, 'Tarifa'] = (new_distance * df.loc[calculable_mask, 'Tarifa']) / df.loc[calculable_mask, 'Distancia']
+                
+                # Calculate the new total tariff in 'Tarifa Real'
+                df.loc[calculable_mask, 'Tarifa Real'] = (new_distance * df.loc[calculable_mask, 'Tarifa']) / df.loc[calculable_mask, 'Distancia']
+                # Update the distance to show what was used for the calculation
                 df.loc[calculable_mask, 'Distancia'] = new_distance
 
-        # Prepare final DataFrame for display
+        # --- Prepare final DataFrame for display ---
         cols_to_drop = ['Chave']
-        # if 'FAIXA' in fluxo_name.upper():
-            # cols_to_drop.extend(['DistanciaMin', 'DistanciaMax'])
         
         self.last_results_df = df.drop(columns=cols_to_drop, errors='ignore')
         
+        # Replace 'inf' with a string to make it JSON-safe for the UI
+        if 'DistanciaMax' in self.last_results_df.columns:
+            self.last_results_df['DistanciaMax'] = self.last_results_df['DistanciaMax'].replace(float('inf'), 'Acima')
+
+        # --- Reorder columns for better display ---
+        cols = self.last_results_df.columns.tolist()
+        if 'Tarifa' in cols and 'Tarifa Real' in cols:
+            cols.insert(cols.index('Tarifa') + 1, cols.pop(cols.index('Tarifa Real')))
+            self.last_results_df = self.last_results_df[cols]
+
+        # --- Round the tariff columns to 2 decimal places ---
+        if 'Tarifa' in self.last_results_df.columns:
+            self.last_results_df['Tarifa'] = pd.to_numeric(self.last_results_df['Tarifa'], errors='coerce').round(2)
+        if 'Tarifa Real' in self.last_results_df.columns:
+            self.last_results_df['Tarifa Real'] = pd.to_numeric(self.last_results_df['Tarifa Real'], errors='coerce').round(2)
+
         return self.last_results_df.to_dict('records')
-    
+
 
 
     def export_to_excel(self):
