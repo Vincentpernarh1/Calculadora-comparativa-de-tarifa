@@ -790,8 +790,8 @@ class Api:
         
     def calculate_tariffs(self, params):
         """
-        Applies UI filters. For 'FAIXA'/'MILK RUN' fluxos, it filters by distance range and 
-        calculates a final price. For others, it recalculates tariffs ('Regra de Três').
+        Applies UI filters. If a distance is provided, it calculates a 'Tarifa Real' 
+        based on the flow type. Otherwise, it returns the base data for the selected filters.
         """
         fluxo_name = params['fluxo']
         if not fluxo_name or fluxo_name not in self.fluxo_data:
@@ -818,9 +818,6 @@ class Api:
         if df.empty:
             return []
 
-        # --- Initialize new column ---
-        df['Tarifa Real'] = pd.NA
-
         # --- Distance-based logic ---
         try:
             new_distance = float(params.get('km_value'))
@@ -829,12 +826,15 @@ class Api:
         except (ValueError, TypeError):
             new_distance = None
 
+        # Only perform distance calculations and add 'Tarifa Real' if a distance is provided
         if new_distance:
+            # Initialize the new column only when it's needed
+            df['Tarifa Real'] = pd.NA
+
             # This block handles any flow that uses distance ranges (FAIXA or MILK RUN)
             if ('FAIXA' in fluxo_name.upper() or 'MILK RUN' in fluxo_name.upper()) and \
             ('DistanciaMin' in df.columns and 'DistanciaMax' in df.columns):
                 
-                # Step 1: Find the correct row(s) based on the distance range
                 range_mask = (
                     (df['DistanciaMin'].notna()) &
                     (df['DistanciaMax'].notna()) &
@@ -842,24 +842,17 @@ class Api:
                     (df['DistanciaMax'] >= new_distance)
                 )
                 
-                # Step 2: Apply the correct calculation based on the specific flow type
                 if 'MILK RUN' in fluxo_name.upper():
-                    # For MILK RUN, Tarifa Real = distance * rate
                     df.loc[range_mask, 'Tarifa Real'] = new_distance * df.loc[range_mask, 'Tarifa']
                 elif 'FAIXA' in fluxo_name.upper():
-                    # For FAIXA, Tarifa Real = the fixed rate from the range
                     df.loc[range_mask, 'Tarifa Real'] = df.loc[range_mask, 'Tarifa']
                     
-                # Step 3: Filter the DataFrame to only show the relevant row(s)
                 df = df[range_mask].copy()
             
             # This block handles the "Rule of Three" flows
             elif 'Distancia' in df.columns:
                 calculable_mask = (df['Distancia'].notna()) & (df['Distancia'] > 0) & (df['Tarifa'].notna())
-                
-                # Calculate the new total tariff in 'Tarifa Real'
                 df.loc[calculable_mask, 'Tarifa Real'] = (new_distance * df.loc[calculable_mask, 'Tarifa']) / df.loc[calculable_mask, 'Distancia']
-                # Update the distance to show what was used for the calculation
                 df.loc[calculable_mask, 'Distancia'] = new_distance
 
         # --- Prepare final DataFrame for display ---
@@ -867,21 +860,21 @@ class Api:
         
         self.last_results_df = df.drop(columns=cols_to_drop, errors='ignore')
         
-        # Replace 'inf' with a string to make it JSON-safe for the UI
         if 'DistanciaMax' in self.last_results_df.columns:
             self.last_results_df['DistanciaMax'] = self.last_results_df['DistanciaMax'].replace(float('inf'), 'Acima')
 
-        # --- Reorder columns for better display ---
-        cols = self.last_results_df.columns.tolist()
-        if 'Tarifa' in cols and 'Tarifa Real' in cols:
-            cols.insert(cols.index('Tarifa') + 1, cols.pop(cols.index('Tarifa Real')))
-            self.last_results_df = self.last_results_df[cols]
+        # Reorder and round columns only if 'Tarifa Real' was created
+        if 'Tarifa Real' in self.last_results_df.columns:
+            cols = self.last_results_df.columns.tolist()
+            if 'Tarifa' in cols:
+                cols.insert(cols.index('Tarifa') + 1, cols.pop(cols.index('Tarifa Real')))
+                self.last_results_df = self.last_results_df[cols]
 
-        # --- Round the tariff columns to 2 decimal places ---
+            self.last_results_df['Tarifa Real'] = pd.to_numeric(self.last_results_df['Tarifa Real'], errors='coerce').round(2)
+
+        # Always round the base 'Tarifa' column
         if 'Tarifa' in self.last_results_df.columns:
             self.last_results_df['Tarifa'] = pd.to_numeric(self.last_results_df['Tarifa'], errors='coerce').round(2)
-        if 'Tarifa Real' in self.last_results_df.columns:
-            self.last_results_df['Tarifa Real'] = pd.to_numeric(self.last_results_df['Tarifa Real'], errors='coerce').round(2)
 
         return self.last_results_df.to_dict('records')
 
