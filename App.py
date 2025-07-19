@@ -192,6 +192,8 @@ HTML_CONTENT = """
 
     <div id="notification" class="fixed bottom-12 right-5 text-white py-2 px-4 rounded-lg shadow-lg opacity-0 pointer-events-none z-30"></div>
 
+    
+# !------------------------------ Java Script Contions and Code -----------------------------------------!
     <script>
         let currentCalcType = 'OW';
         let choiceInstances = {};
@@ -446,6 +448,7 @@ HTML_CONTENT = """
 </html>
 """
 
+# !------------------------------ API code and conditions -----------------------------------------!
 class Api:
     def __init__(self):
         self.base_folder = None
@@ -488,9 +491,6 @@ class Api:
         except Exception as e:
             print(f"PYTHON ERROR in select_folder: {e}") 
             return {'success': False, 'message': f'Ocorreu um erro no Python: {e}'}
-
-
-
 
 
 
@@ -607,8 +607,6 @@ class Api:
                     continue
 
                     
-
-
 # !------------------------------Faixa Condition -----------------------------------------!
         elif 'FAIXA' in fluxo_name:  # Catch '02. FAIXA', 'FAIXA' etc.
             for file_name in os.listdir(fluxo_path):
@@ -697,37 +695,23 @@ class Api:
                     print(f"Error processing file {file_path} for 'FAIXA': {e}")
                     continue
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 # !------------------------------Direto and Linehaul contions and processing -----------------------------------------!
         else:
 
             # --- ORIGINAL Logic for '01', '03', etc. ---
             geoship_df = None
             try:
-                home_dir = os.path.expanduser('~')
-                geoship_folder_path = os.path.join(home_dir, 'Desktop', 'STALLANTIS', 'calculadora comparativo tarifas', 'TARIFAS VIGENTES')
-                geoship_filename = next((f for f in os.listdir(geoship_folder_path) if 'geoshiptable' in f.lower() and f.endswith(('.xlsx', '.xls'))), None)
+                parent_folder = os.path.dirname(self.base_folder)
+
+                # Look for Geoship table in that parent folder
+                geoship_filename = next(
+                    (f for f in os.listdir(parent_folder)
+                    if 'geoshiptable' in f.lower() and f.endswith(('.xlsx', '.xls'))),
+                    None
+                )
 
                 if geoship_filename:
-                    geoship_full_path = os.path.join(geoship_folder_path, geoship_filename)
+                    geoship_full_path = os.path.join(parent_folder, geoship_filename)
                     geoship_df = pd.read_excel(geoship_full_path, engine='openpyxl')
                     geoship_df = geoship_df.rename(columns={
                         'Fornecedor': 'Fornecedor_geoship',
@@ -739,7 +723,7 @@ class Api:
                     print("⚠️ Warning: 'GeoshipTable' file not found.")
 
             except FileNotFoundError:
-                print(f" Error: Directory not found at '{geoship_folder_path}'.")
+                print(f" Error: Directory not found at '{parent_folder}'.")
             except Exception as e:
                 print(f" Error loading GeoshipTable: {e}.")
 
