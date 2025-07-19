@@ -739,9 +739,9 @@ class Api:
                     print("⚠️ Warning: 'GeoshipTable' file not found.")
 
             except FileNotFoundError:
-                print(f"❌ Error: Directory not found at '{geoship_folder_path}'.")
+                print(f" Error: Directory not found at '{geoship_folder_path}'.")
             except Exception as e:
-                print(f"❌ Error loading GeoshipTable: {e}.")
+                print(f" Error loading GeoshipTable: {e}.")
 
 
             # --- ORIGINAL Logic for '01', '03', etc. ---
