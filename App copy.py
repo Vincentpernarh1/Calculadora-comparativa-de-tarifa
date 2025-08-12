@@ -35,6 +35,10 @@ HTML_CONTENT = """
         
         #results-container-wrapper { overflow: auto; }
         #results-table th { position: sticky; top: 0; background-color: #e5e7eb; z-index: 1; }
+        #results-table td, #results-table th {
+            user-select: text; /* or user-select: all; */
+            cursor: text;
+        }
         
         .control-grid {
             display: grid;
@@ -170,7 +174,7 @@ HTML_CONTENT = """
                     
                     <div id="results-table" class="hidden h-full flex flex-col">
                          <div class="flex justify-between items-center mb-1 flex-shrink-0">
-                             <h2 class="text-xl font-bold text-slate-700">Resultados da Cotação</h2>
+                             <h2 class="text-xl font-bold text-slate-700">Resultados da Tarifas </h2>
                              <button id="export-btn" onclick="exportResults()" class="bg-green-600 text-white font-bold py-2 px-4 rounded-lg shadow-md hover:bg-green-700">
                                  Exportar para Excel
                              </button>
@@ -188,6 +192,8 @@ HTML_CONTENT = """
 
     <div id="notification" class="fixed bottom-12 right-5 text-white py-2 px-4 rounded-lg shadow-lg opacity-0 pointer-events-none z-30"></div>
 
+    
+# !------------------------------ Java Script Contions and Code -----------------------------------------!
     <script>
         let currentCalcType = 'OW';
         let choiceInstances = {};
@@ -442,11 +448,14 @@ HTML_CONTENT = """
 </html>
 """
 
+# !------------------------------ API code and conditions -----------------------------------------!
 class Api:
     def __init__(self):
         self.base_folder = None
         self.fluxo_data = {}
         self.last_results_df = None
+        self.window = None
+
 
     def _parse_transporter_name(self, filename):
         """Extracts a cleaned-up transporter name from the filename."""
@@ -455,24 +464,37 @@ class Api:
             return match.group(1).replace('_', ' ').title()
         return os.path.splitext(filename)[0].replace('_', ' ').title()
 
+    # This function is inside your Api class
     def select_folder(self):
-        """Handles the main folder selection dialog and identifies sub-folders (fluxos)."""
+        """Handles the main folder selection using pywebview's native dialog."""
         try:
-            self.fluxo_data = {}
-            root = tk.Tk()
-            root.withdraw()
-            folder_path = filedialog.askdirectory(title="Selecione a Pasta Principal de Tarifas")
-            root.destroy()
-            if not folder_path:
+            if not self._window: # RENAMED from self.window
+                return {'success': False, 'message': 'Erro: A referência da janela não foi configurada.'}
+            
+            # Use the renamed variable here
+            dialog_result = self._window.create_file_dialog(webview.FOLDER_DIALOG)
+
+            if not dialog_result:
                 return {'success': False, 'message': 'Nenhuma pasta foi selecionada.'}
             
+            folder_path = dialog_result[0]
             self.base_folder = folder_path
+            self.fluxo_data = {}
+            
             fluxos = [d for d in os.listdir(self.base_folder) if os.path.isdir(os.path.join(self.base_folder, d))]
+            
             if not fluxos:
-                return {'success': False, 'message': 'Nenhum fluxo (subpasta) encontrado.'}
+                return {'success': False, 'message': 'Nenhum fluxo (subpasta) encontrado na pasta selecionada.'}
+                
             return {'success': True, 'path': self.base_folder, 'fluxos': sorted(fluxos)}
+            
         except Exception as e:
-            return {'success': False, 'message': f'Ocorreu um erro: {e}'}
+            print(f"PYTHON ERROR in select_folder: {e}") 
+            return {'success': False, 'message': f'Ocorreu um erro no Python: {e}'}
+
+
+
+
 
 
     def get_filters_for_fluxo(self, fluxo_name):
@@ -585,8 +607,6 @@ class Api:
                     continue
 
                     
-
-
 # !------------------------------Faixa Condition -----------------------------------------!
         elif 'FAIXA' in fluxo_name:  # Catch '02. FAIXA', 'FAIXA' etc.
             for file_name in os.listdir(fluxo_path):
@@ -675,30 +695,42 @@ class Api:
                     print(f"Error processing file {file_path} for 'FAIXA': {e}")
                     continue
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 # !------------------------------Direto and Linehaul contions and processing -----------------------------------------!
         else:
+
+            # --- ORIGINAL Logic for '01', '03', etc. ---
+            geoship_df = None
+            try:
+                parent_folder = os.path.dirname(self.base_folder)
+
+                # Look for Geoship table in that parent folder
+                geoship_filename = next(
+                    (f for f in os.listdir(parent_folder)
+                    if 'geoshiptable' in f.lower() and f.endswith(('.xlsx', '.xls'))),
+                    None
+                )
+
+                if geoship_filename:
+                    geoship_full_path = os.path.join(parent_folder, geoship_filename)
+                    geoship_df = pd.read_excel(geoship_full_path, engine='openpyxl')
+                    geoship_df = geoship_df.rename(columns={
+                        'Fornecedor': 'Fornecedor_geoship',
+                        'Km Total': 'Distancia_geoship',
+                        'Destino Materiais': 'Destino_geoship'
+                    })
+                    print(f"✅ Successfully loaded data source: '{geoship_filename}'.")
+                else:
+                    print("⚠️ Warning: 'GeoshipTable' file not found.")
+
+            except FileNotFoundError:
+                print(f" Error: Directory not found at '{parent_folder}'.")
+            except Exception as e:
+                print(f" Error loading GeoshipTable: {e}.")
+
+
             # --- ORIGINAL Logic for '01', '03', etc. ---
             for file_name in os.listdir(fluxo_path):
-                if not file_name.lower().endswith(('.xlsx', '.xls')):
+                if not file_name.lower().endswith(('.xlsx', '.xls')) or file_name.startswith('~'):
                     continue
                 file_path = os.path.join(fluxo_path, file_name)
                 try:
@@ -714,36 +746,115 @@ class Api:
                             new_columns.append(top_header)
                         else:
                             new_columns.append(f"{top_header}_{bottom_header}")
+
                     df = pd.read_excel(file_path, header=None, skiprows=2, engine='openpyxl')
                     min_cols = min(len(df.columns), len(new_columns))
                     df = df.iloc[:, :min_cols]
                     df.columns = new_columns[:min_cols]
+
+                    df.columns = [col.strip() for col in df.columns]
+
+                    tipo_fluxo_col = next((col for col in df.columns if 'tipo de fluxo' in col.lower()), None)
+                    if tipo_fluxo_col:
+                        print(f"Detected 'Tipo de Fluxo' column: {tipo_fluxo_col}")
+
                     fornecedor_col_name = next((c for c in df.columns if 'fornecedor' in c.lower() and 'codigo' not in c.lower()), None)
+
                     id_cols_map = {
                         'Nomeacao': next((c for c in df.columns if ('nomeação' in c.lower()) or ('nomeacao' in c.lower())), 'Nomeacao'),
-                        'Origem': next((c for c in df.columns if ('cidade de coleta' in c.lower()) or ('cidade_coleta' in c.lower()) ), 'Origem'),
+                        'Origem': next((c for c in df.columns if ('cidade de coleta' in c.lower()) or ('cidade_coleta' in c.lower())), 'Origem'),
                         'LocalColeta': next((c for c in df.columns if ('local de coleta' in c.lower()) or ('local_coleta' in c.lower())), 'LocalColeta'),
                         'Destino': next((c for c in df.columns if 'destino materiais' in c.lower()), 'Destino'),
                         'Distancia': next((c for c in df.columns if 'distância' in c.lower()), 'Distancia'),
                     }
-                    if fornecedor_col_name: id_cols_map['Fornecedor'] = fornecedor_col_name
+                    if fornecedor_col_name:
+                        id_cols_map['Fornecedor'] = fornecedor_col_name
+
                     df.rename(columns={v: k for k, v in id_cols_map.items() if v in df.columns}, inplace=True)
-                    if 'Fornecedor' not in df.columns: df['Fornecedor'] = 'N/A'
+
+                    if 'Fornecedor' not in df.columns:
+                        df['Fornecedor'] = 'N/A'
+
                     id_vars = list(id_cols_map.keys())
-                    id_vars.append('Transportadora')
+                    if tipo_fluxo_col:
+                        id_vars.append(tipo_fluxo_col)
+
                     df['Transportadora'] = self._parse_transporter_name(file_name)
+                    id_vars.append('Transportadora')
+
                     value_vars = [col for col in df.columns if '_' in col and col not in id_vars]
+
                     melted_df = df.melt(
-                        id_vars=[v for v in id_vars if v in df.columns], value_vars=value_vars,
-                        var_name='Veiculo_Viagem', value_name='Tarifa'
+                        id_vars=[v for v in id_vars if v in df.columns],
+                        value_vars=value_vars,
+                        var_name='Veiculo_Viagem',
+                        value_name='Tarifa'
                     )
+
                     melted_df[['Veiculo', 'Viagem']] = melted_df['Veiculo_Viagem'].str.split('_', expand=True, n=1)
                     melted_df.drop('Veiculo_Viagem', axis=1, inplace=True)
                     melted_df['Chave'] = melted_df['Origem'].astype(str) + ' & ' + melted_df['Destino'].astype(str)
+
+                    # Replace Geoship Rows
+                    # Replace Geoship Rows
+                    if tipo_fluxo_col and tipo_fluxo_col in melted_df.columns and geoship_df is not None:
+                        is_geoship = melted_df[tipo_fluxo_col].astype(str).str.lower().str.contains('geoship', na=False)
+                        geoship_matches = melted_df[is_geoship]
+
+                        non_geoship = melted_df[~is_geoship]
+                        updated_rows = []
+
+                        # For each row where Tipo de Fluxo contains Geoship
+                        for _, row in geoship_matches.iterrows():
+                            tipo_fluxo_value = str(row[tipo_fluxo_col]).strip()
+                            # Search Geoship table for rows where Tipo de Fluxo matches (or contains) the tipo_fluxo_value
+                            # Here we assume geoship_df has a column like 'Tipo de Fluxo' or similar to match
+                            # Adjust the column name below as needed, for example 'Tipo de Fluxo' or 'Tipo_de_Fluxo' or something else
+                            # We'll assume it's 'Tipo de Fluxo' exactly for now
+                            geoship_key_col = next((col for col in geoship_df.columns if 'tipo' in col.lower() and 'fluxo' in col.lower()), None)
+                            if geoship_key_col is None:
+                                # fallback: just match on some column named 'Geoship' if exists
+                                geoship_key_col = next((col for col in geoship_df.columns if 'geoship' in col.lower()), None)
+                            
+                            if geoship_key_col:
+                                # Find rows in geoship_df that contain the tipo_fluxo_value (case insensitive)
+                                matched_geo_rows = geoship_df[
+                                            geoship_df[geoship_key_col].astype(str).str.lower() == tipo_fluxo_value.lower()
+                                        ]
+
+                            else:
+                                matched_geo_rows = pd.DataFrame()  # no matches possible
+
+                            if matched_geo_rows.empty:
+                                # No match found, keep original row as is
+                                updated_rows.append(row)
+                            else:
+                                # For each matching geoship row, create a new combined row
+                                for _, geo_row in matched_geo_rows.iterrows():
+                                    new_row = row.copy()
+                                    # Update columns with geoship data, rename accordingly if needed
+                                    # Match columns you renamed earlier: Fornecedor_geoship, Distancia_geoship, Destino_geoship, plus others if relevant
+                                    # You can add any other columns you want to override from geo_row here
+                                    new_row['Fornecedor'] = geo_row.get('Fornecedor_geoship', new_row.get('Fornecedor', 'N/A'))
+                                    new_row['Distancia'] = geo_row.get('Distancia_geoship', new_row.get('Distancia', None))
+                                    new_row['Origem'] = geo_row.get('CNPJ Origem', new_row.get('Origem', None))
+                                    new_row['Destino'] = geo_row.get('Destino_geoship', new_row.get('Destino', None))
+                                    # You can add other columns from geo_row if needed
+
+                                    updated_rows.append(new_row)
+
+                        # Combine all non-geoship rows and expanded geoship rows
+                        melted_df = pd.concat([non_geoship, pd.DataFrame(updated_rows)], ignore_index=True).drop(columns=[tipo_fluxo_col], errors='ignore')
+
+
+
                     all_melted_dfs.append(melted_df)
+
                 except Exception as e:
                     print(f"Error processing file {file_path}: {e}")
                     continue
+
+
         
         if not all_melted_dfs:
             return {'success': False, 'message': 'Nenhum arquivo de tarifa válido foi encontrado.'}
@@ -880,25 +991,63 @@ class Api:
 
 
 
+
+    
+# This function must be a method of your Api class
+   # This function goes inside your Api class
     def export_to_excel(self):
-        """Exports the last displayed results to an Excel file."""
         if self.last_results_df is None or self.last_results_df.empty:
             return {'success': False, 'message': 'Não há dados para exportar.'}
+
+        if not self._window:
+            return {'success': False, 'message': 'Erro: Referência da janela não encontrada.'}
+
         try:
-            file_path_tuple = window.create_file_dialog(webview.SAVE_DIALOG, directory=os.path.expanduser('~'), save_filename='cotacao_tarifas.xlsx')
+            file_path_tuple = self._window.create_file_dialog(
+                webview.SAVE_DIALOG,
+                directory=os.path.expanduser('~'),
+                save_filename='cotacao_tarifas.xlsx'
+            )
             
-            if not file_path_tuple or not file_path_tuple[0]:
+            if not file_path_tuple:
                 return {'success': False, 'message': 'Exportação cancelada.'}
             
-            file_path = file_path_tuple[0]
-            self.last_results_df.to_excel(file_path, index=False, engine='openpyxl')
-            return {'success': True, 'message': f'Salvo em: {file_path}'}
+            # This is the full path returned by the dialog
+            user_choice = file_path_tuple[0]
+            
+            # --- NEW, SAFER LOGIC STARTS HERE ---
+            
+            # Get just the filename part of the path
+            filename = os.path.basename(user_choice)
+
+            # Check if the chosen path is invalid (e.g., just a drive letter "C:")
+            if not filename or ":" in filename:
+                # If the path is invalid, create a safe default path in the Downloads folder.
+                downloads_path = os.path.join(os.path.expanduser('~'), 'Downloads')
+                os.makedirs(downloads_path, exist_ok=True) # Ensure the folder exists
+                final_path = os.path.join(downloads_path, 'cotacao_tarifas.xlsx')
+                
+            else:
+                # If the path is valid, use it. Just make sure it has the right extension.
+                final_path = user_choice
+                if not final_path.lower().endswith('.xlsx'):
+                    final_path += '.xlsx'
+
+            # --- SAFER LOGIC ENDS HERE ---
+                
+            # Use the final, guaranteed-safe path to save the file
+            self.last_results_df.to_excel(final_path, index=False, engine='openpyxl')
+            
+            return {'success': True, 'message': f'Sucesso! Arquivo salvo em: {final_path}'}
+
         except Exception as e:
-            return {'success': False, 'message': f'Erro ao salvar: {e}'}
+            return {'success': False, 'message': f'Erro ao exportar: {e}'}
+            
 
 
 if __name__ == '__main__':
     api = Api()
+
     window = webview.create_window(
         'Calculador de Tarifas Unificado',
         html=HTML_CONTENT,
@@ -907,4 +1056,8 @@ if __name__ == '__main__':
         height=900,
         resizable=True
     )
-    webview.start()
+    
+    # Use the new variable name with the underscore
+    api._window = window
+
+    webview.start() # Added d
