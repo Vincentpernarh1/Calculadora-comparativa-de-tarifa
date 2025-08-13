@@ -1,3 +1,8 @@
+# Working code for a unified tariff calculator app
+# This code is designed to run in a Python environment with webview and pandas installed.
+# its save as a backup file for future reference.
+
+
 import webview
 import json
 import os
@@ -143,6 +148,14 @@ HTML_CONTENT = """
                                 <option>Selecione um fluxo</option>
                             </select>
                         </div>
+
+                        <div id="motorista-filter-div" class="hidden">
+                            <label for="motorista-select" class="block text-sm font-medium text-slate-700 mb-2">Motorista(s)</label>
+                            <select id="motorista-select" class="w-full p-1 bg-white border" disabled>
+                                <option>Selecione as opções</option>
+                            </select>
+                        </div>
+
                         <div>
                             <label class="block text-sm font-medium text-slate-700 mb-2">Viagem</label>
                             <div class="flex items-center justify-between bg-white border rounded-lg p-1">
@@ -262,6 +275,15 @@ HTML_CONTENT = """
 
         async function onFluxoSelected() {
             const fluxo = document.getElementById('fluxo-select').value;
+            const motoristaFilterDiv = document.getElementById('motorista-filter-div');
+
+            // Show/hide motorista filter based on fluxo
+            if (fluxo && fluxo.toUpperCase().includes('SPOTS')) {
+                motoristaFilterDiv.classList.remove('hidden');
+            } else {
+                motoristaFilterDiv.classList.add('hidden');
+            }
+
             if (!fluxo) {
                 resetAllFilters();
                 return;
@@ -279,6 +301,12 @@ HTML_CONTENT = """
                     populateDropdown('destino-select', response.filters.Destino, 'Todos');
                     populateDropdown('vehicle-select', response.filters.Veiculos, 'Todos');
                     
+                    // Populate motorista dropdown if it's a SPOTS flow
+                    if (fluxo.toUpperCase().includes('SPOTS')) {
+                        populateDropdown('motorista-select', response.filters.Motoristas, 'Todos');
+                        initializeSearchableDropdown('motorista-select');
+                    }
+
                     initializeSearchableDropdown('fornecedor-select');
                     initializeSearchableDropdown('origem-select');
                     initializeSearchableDropdown('local-coleta-select');
@@ -305,6 +333,7 @@ HTML_CONTENT = """
                 local_coleta: document.getElementById('local-coleta-select').value,
                 destino: document.getElementById('destino-select').value,
                 veiculo: document.getElementById('vehicle-select').value,
+                motorista: document.getElementById('motorista-select').value,
                 calc_type: currentCalcType,
                 km_value: document.getElementById('km-value').value
             };
@@ -401,33 +430,38 @@ HTML_CONTENT = """
         
         function resetAllFilters() {
             destroyAllChoiceInstances();
-            ['nomeacao-select', 'fornecedor-select', 'origem-select', 'local-coleta-select', 'destino-select', 'vehicle-select'].forEach(id => {
+            ['nomeacao-select', 'fornecedor-select', 'origem-select', 'local-coleta-select', 'destino-select', 'vehicle-select', 'motorista-select'].forEach(id => {
                 const select = document.getElementById(id);
-                select.innerHTML = '<option>Selecione um fluxo</option>';
-                select.disabled = true;
+                if (select) {
+                    select.innerHTML = '<option>Selecione um fluxo</option>';
+                    select.disabled = true;
+                }
             });
+            document.getElementById('motorista-filter-div').classList.add('hidden');
         }
 
         function showLoadingOnFilters() {
             destroyAllChoiceInstances();
-             ['nomeacao-select', 'fornecedor-select', 'origem-select', 'local-coleta-select', 'destino-select', 'vehicle-select'].forEach(id => {
+             ['nomeacao-select', 'fornecedor-select', 'origem-select', 'local-coleta-select', 'destino-select', 'vehicle-select', 'motorista-select'].forEach(id => {
                 const select = document.getElementById(id);
-                select.innerHTML = '<option>Carregando...</option>';
-                select.disabled = true;
+                if (select) {
+                    select.innerHTML = '<option>Carregando...</option>';
+                    select.disabled = true;
+                }
             });
         }
         
         function enableAllFilters() {
-             const filterIds = ['nomeacao-select', 'fornecedor-select', 'origem-select', 'local-coleta-select', 'destino-select', 'vehicle-select'];
+             const filterIds = ['nomeacao-select', 'fornecedor-select', 'origem-select', 'local-coleta-select', 'destino-select', 'vehicle-select', 'motorista-select'];
              filterIds.forEach(id => {
                  const instance = choiceInstances[id];
                  if (instance) {
-                       instance.enable();
+                        instance.enable();
                  } else {
-                       const element = document.getElementById(id);
-                       if (element) {
-                           element.disabled = false;
-                       }
+                        const element = document.getElementById(id);
+                        if (element) {
+                            element.disabled = false;
+                        }
                  }
             });
         }
@@ -454,7 +488,7 @@ class Api:
         self.base_folder = None
         self.fluxo_data = {}
         self.last_results_df = None
-        self.window = None
+        self._window = None
 
 
     def _parse_transporter_name(self, filename):
@@ -464,14 +498,12 @@ class Api:
             return match.group(1).replace('_', ' ').title()
         return os.path.splitext(filename)[0].replace('_', ' ').title()
 
-    # This function is inside your Api class
     def select_folder(self):
         """Handles the main folder selection using pywebview's native dialog."""
         try:
-            if not self._window: # RENAMED from self.window
+            if not self._window:
                 return {'success': False, 'message': 'Erro: A referência da janela não foi configurada.'}
             
-            # Use the renamed variable here
             dialog_result = self._window.create_file_dialog(webview.FOLDER_DIALOG)
 
             if not dialog_result:
@@ -492,15 +524,10 @@ class Api:
             print(f"PYTHON ERROR in select_folder: {e}") 
             return {'success': False, 'message': f'Ocorreu um erro no Python: {e}'}
 
-
-
-
-
-
     def get_filters_for_fluxo(self, fluxo_name):
         """
         Reads all Excel files in a given fluxo, processes them into a tidy (long) DataFrame,
-        and returns the available filters for the UI. It has special processing for '02 FAIXA'.
+        and returns the available filters for the UI.
         """
         if fluxo_name in self.fluxo_data:
             return self.fluxo_data[fluxo_name]['filters_response']
@@ -508,7 +535,7 @@ class Api:
         fluxo_path = os.path.join(self.base_folder, fluxo_name)
         all_melted_dfs = []
 
-        # Replace the 'if 04. MILK RUN' block with this
+
         if '04. MILK RUN' in fluxo_name:
             for file_name in os.listdir(fluxo_path):
                 if not file_name.lower().endswith(('.xlsx', '.xls')) or file_name.startswith('~$'):
@@ -606,8 +633,6 @@ class Api:
                     print(f"Error processing file {file_path} for 'MILK RUN': {e}")
                     continue
 
-                    
-# !------------------------------Faixa Condition -----------------------------------------!
         elif 'FAIXA' in fluxo_name:  # Catch '02. FAIXA', 'FAIXA' etc.
             for file_name in os.listdir(fluxo_path):
                 if not file_name.lower().endswith(('.xlsx', '.xls')):
@@ -695,7 +720,89 @@ class Api:
                     print(f"Error processing file {file_path} for 'FAIXA': {e}")
                     continue
 
-# !------------------------------Direto and Linehaul contions and processing -----------------------------------------!
+        # !------------------------------FLUXO SPOTS -----------------------------------------!
+        elif 'SPOTS' in fluxo_name:
+            for file_name in os.listdir(fluxo_path):
+                if not file_name.lower().endswith(('.xlsx', '.xls')) or file_name.startswith('~$'):
+                    continue
+                file_path = os.path.join(fluxo_path, file_name)
+                try:
+                    wb = openpyxl.load_workbook(file_path, data_only=True)
+                    sheet = wb.active
+                    motorista_cols = {}
+                    last_vehicle = None
+                    for col_idx in range(1, sheet.max_column + 1):
+                        cell_val = sheet.cell(row=1, column=col_idx).value
+                        if cell_val and str(cell_val).strip():
+                            vehicle_name = str(cell_val).strip()
+                            if vehicle_name == '0.75':
+                                last_vehicle = '3/4'
+                            else:
+                                last_vehicle = vehicle_name
+                        
+                        if last_vehicle:
+                            # **[FIX]** More robustly parse the motorista value to ensure it's a number.
+                            motorista_val_raw = sheet.cell(row=3, column=col_idx).value
+                            if motorista_val_raw is not None:
+                                try:
+                                    # Clean and convert the value to an integer
+                                    motorista_clean = int(float(str(motorista_val_raw).strip()))
+                                    motorista_cols[col_idx] = (last_vehicle, motorista_clean)
+                                except (ValueError, TypeError):
+                                    # If conversion fails, it's not a valid motorista column, so skip it
+                                    continue
+
+                    header_map = {}
+                    data_start_row, header_found_row = 1, -1
+                    for r in range(1, min(10, sheet.max_row + 1)):
+                        if header_found_row != -1 and r > header_found_row: break
+                        for c in range(1, min(20, sheet.max_column + 1)):
+                            cell_val = str(sheet.cell(row=r, column=c).value or '').strip().lower()
+                            if 'origem' in cell_val: header_map['Origem'] = c
+                            elif 'destino' in cell_val: header_map['Destino'] = c
+                        if 'Origem' in header_map or 'Destino' in header_map:
+                            header_found_row, data_start_row = r, r + 1
+                    
+                    if 'Origem' not in header_map or 'Destino' not in header_map: continue
+                    
+                    processed_rows = []
+                    for row_idx in range(data_start_row, sheet.max_row + 1):
+                        origem = sheet.cell(row=row_idx, column=header_map['Origem']).value
+                        destino = sheet.cell(row=row_idx, column=header_map['Destino']).value
+                        if not origem or not destino: continue
+                        for col_idx, (vehicle, motorista) in motorista_cols.items():
+                            tarifa = sheet.cell(row=row_idx, column=col_idx).value
+                            if tarifa is not None and str(tarifa).strip() != "":
+                                try:
+                                    processed_rows.append({
+                                        'Transportadora': self._parse_transporter_name(file_name),
+                                        'Veiculo': vehicle, 'Motorista': motorista,
+                                        'Origem': str(origem).strip(), 'Destino': str(destino).strip(),
+                                        'Distancia': float(motorista),
+                                        'Tarifa': float(tarifa),
+                                        'Nomeacao': 'N/A', 'Fornecedor': 'N/A', 'LocalColeta': 'N/A', 'Viagem': 'N/A',
+                                        'Chave': f"{origem} & {destino}"
+                                    })
+                                except (ValueError, TypeError): continue
+                    if processed_rows: all_melted_dfs.append(pd.DataFrame(processed_rows))
+                except Exception as e:
+                    print(f"Error processing file {file_path} for 'SPOTS': {e}")
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        
         else:
 
             # --- ORIGINAL Logic for '01', '03', etc. ---
@@ -755,8 +862,6 @@ class Api:
                     df.columns = [col.strip() for col in df.columns]
 
                     tipo_fluxo_col = next((col for col in df.columns if 'tipo de fluxo' in col.lower()), None)
-                    if tipo_fluxo_col:
-                        print(f"Detected 'Tipo de Fluxo' column: {tipo_fluxo_col}")
 
                     fornecedor_col_name = next((c for c in df.columns if 'fornecedor' in c.lower() and 'codigo' not in c.lower()), None)
 
@@ -891,6 +996,16 @@ class Api:
             'Destino': sorted(master_df['Destino'].dropna().unique().tolist()),
             'Veiculos': sorted(master_df['Veiculo'].dropna().unique().tolist())
         }
+
+        # **[FIX]** More robustly create the Motoristas filter list
+        if 'Motorista' in master_df.columns:
+            try:
+                # Ensure values are clean integers before creating the unique list
+                unique_motoristas = master_df['Motorista'].dropna().astype(int).unique()
+                filters['Motoristas'] = sorted(unique_motoristas.tolist())
+            except (ValueError, TypeError):
+                # If conversion fails for any reason, return an empty list
+                filters['Motoristas'] = []
         
         response = {'success': True, 'filters': filters}
         self.fluxo_data[fluxo_name] = {'df': master_df, 'filters_response': response}
@@ -898,152 +1013,106 @@ class Api:
         return response
 
    
-        
-    def calculate_tariffs(self, params):
-        """
-        Applies UI filters. If a distance is provided, it calculates a 'Tarifa Real' 
-        based on the flow type. Otherwise, it returns the base data for the selected filters.
-        """
-        fluxo_name = params['fluxo']
-        if not fluxo_name or fluxo_name not in self.fluxo_data:
-            return []
 
+    def calculate_tariffs(self, params):
+        fluxo_name = params['fluxo']
+        if not fluxo_name or fluxo_name not in self.fluxo_data: return []
         df = self.fluxo_data[fluxo_name]['df'].copy()
         
-        # --- Standard filtering from UI dropdowns ---
-        if params.get('fornecedor'):
-            df = df[df['Fornecedor'] == params['fornecedor']]
-        if params.get('nomeacao'):
-            df = df[df['Nomeacao'] == params['nomeacao']]
-        if params.get('origem'):
-            df = df[df['Origem'] == params['origem']]
-        if params.get('local_coleta') and 'LocalColeta' in df.columns:
-            df = df[df['LocalColeta'] == params['local_coleta']]
-        if params.get('destino'):
-            df = df[df['Destino'] == params['destino']]
-        if params.get('veiculo'):
-            df = df[df['Veiculo'] == params['veiculo']]
-        if params.get('calc_type'):
-            df = df[df['Viagem'] == params['calc_type']]
+        # --- Apply Filters ---
+        if params.get('fornecedor'): df = df[df['Fornecedor'] == params['fornecedor']]
+        if params.get('nomeacao'): df = df[df['Nomeacao'] == params['nomeacao']]
+        if params.get('origem'): df = df[df['Origem'] == params['origem']]
+        if params.get('local_coleta') and 'LocalColeta' in df.columns: df = df[df['LocalColeta'] == params['local_coleta']]
+        if params.get('destino'): df = df[df['Destino'] == params['destino']]
+        if params.get('veiculo'): df = df[df['Veiculo'] == params['veiculo']]
+        
+        if 'SPOTS' not in fluxo_name.upper():
+            if params.get('calc_type'): 
+                df = df[df['Viagem'] == params['calc_type']]
 
-        if df.empty:
-            return []
+        if params.get('motorista') and 'Motorista' in df.columns:
+            try: df = df[df['Motorista'] == int(params['motorista'])]
+            except (ValueError, TypeError): pass
 
-        # --- Distance-based logic ---
+        if df.empty: return []
+
+        # --- Perform Calculations ---
         try:
             new_distance = float(params.get('km_value'))
-            if new_distance <= 0:
-                new_distance = None
-        except (ValueError, TypeError):
-            new_distance = None
+            if new_distance <= 0: new_distance = None
+        except (ValueError, TypeError): new_distance = None
 
-        # Only perform distance calculations and add 'Tarifa Real' if a distance is provided
         if new_distance:
-            # Initialize the new column only when it's needed
             df['Tarifa Real'] = pd.NA
-
-            # This block handles any flow that uses distance ranges (FAIXA or MILK RUN)
-            if ('FAIXA' in fluxo_name.upper() or 'MILK RUN' in fluxo_name.upper()) and \
-            ('DistanciaMin' in df.columns and 'DistanciaMax' in df.columns):
-                
-                range_mask = (
-                    (df['DistanciaMin'].notna()) &
-                    (df['DistanciaMax'].notna()) &
-                    (df['DistanciaMin'] <= new_distance) &
-                    (df['DistanciaMax'] >= new_distance)
-                )
-                
+            if ('FAIXA' in fluxo_name.upper() or 'MILK RUN' in fluxo_name.upper()) and 'DistanciaMin' in df.columns:
+                mask = (df['DistanciaMin'] <= new_distance) & (df['DistanciaMax'] >= new_distance)
                 if 'MILK RUN' in fluxo_name.upper():
-                    df.loc[range_mask, 'Tarifa Real'] = new_distance * df.loc[range_mask, 'Tarifa']
-                elif 'FAIXA' in fluxo_name.upper():
-                    df.loc[range_mask, 'Tarifa Real'] = df.loc[range_mask, 'Tarifa']
-                    
-                df = df[range_mask].copy()
-            
-            # This block handles the "Rule of Three" flows
+                    df.loc[mask, 'Tarifa Real'] = new_distance * df.loc[mask, 'Tarifa']
+                else:
+                    df.loc[mask, 'Tarifa Real'] = df.loc[mask, 'Tarifa']
+                df = df[mask].copy()
             elif 'Distancia' in df.columns:
-                calculable_mask = (df['Distancia'].notna()) & (df['Distancia'] > 0) & (df['Tarifa'].notna())
-                df.loc[calculable_mask, 'Tarifa Real'] = (new_distance * df.loc[calculable_mask, 'Tarifa']) / df.loc[calculable_mask, 'Distancia']
-                df.loc[calculable_mask, 'Distancia'] = new_distance
+                mask = (df['Distancia'].notna()) & (df['Distancia'] > 0)
+                df.loc[mask, 'Tarifa Real'] = (new_distance * df.loc[mask, 'Tarifa']) / df.loc[mask, 'Distancia']
+                df.loc[mask, 'Distancia'] = new_distance
 
-        # --- Prepare final DataFrame for display ---
-        cols_to_drop = ['Chave']
+        # --- [NEW] Unified Final Processing, Sorting, and Column Arrangement ---
         
-        self.last_results_df = df.drop(columns=cols_to_drop, errors='ignore')
-        
-        if 'DistanciaMax' in self.last_results_df.columns:
-            self.last_results_df['DistanciaMax'] = self.last_results_df['DistanciaMax'].replace(float('inf'), 'Acima')
+        # 1. Determine the primary column for sorting
+        sort_col = 'Tarifa Real' if 'Tarifa Real' in df.columns and df['Tarifa Real'].notna().any() else 'Tarifa'
 
-        # Reorder and round columns only if 'Tarifa Real' was created
+        # 2. Sort the entire result set by the best tariff, lowest first
+        df_sorted = df.sort_values(by=sort_col, ascending=True)
+
+        # 3. Define the exact columns and order for the final display
+        final_display_cols = [
+            'Origem',
+            'Destino',
+            'Veiculo',
+            'Motorista',
+            'Transportadora',
+            'Distancia',
+            'Tarifa',
+            'Tarifa Real'
+        ]
+
+        # 4. Select only the columns that exist in the current dataframe
+        existing_cols = [col for col in final_display_cols if col in df_sorted.columns]
+        self.last_results_df = df_sorted[existing_cols].copy()
+
+        # 5. Round the tariff columns just before returning
         if 'Tarifa Real' in self.last_results_df.columns:
-            cols = self.last_results_df.columns.tolist()
-            if 'Tarifa' in cols:
-                cols.insert(cols.index('Tarifa') + 1, cols.pop(cols.index('Tarifa Real')))
-                self.last_results_df = self.last_results_df[cols]
-
             self.last_results_df['Tarifa Real'] = pd.to_numeric(self.last_results_df['Tarifa Real'], errors='coerce').round(2)
-
-        # Always round the base 'Tarifa' column
         if 'Tarifa' in self.last_results_df.columns:
             self.last_results_df['Tarifa'] = pd.to_numeric(self.last_results_df['Tarifa'], errors='coerce').round(2)
-
+        
         return self.last_results_df.to_dict('records')
-
-
-
-
     
-# This function must be a method of your Api class
-   # This function goes inside your Api class
+
+
     def export_to_excel(self):
         if self.last_results_df is None or self.last_results_df.empty:
             return {'success': False, 'message': 'Não há dados para exportar.'}
-
         if not self._window:
             return {'success': False, 'message': 'Erro: Referência da janela não encontrada.'}
-
         try:
-            file_path_tuple = self._window.create_file_dialog(
-                webview.SAVE_DIALOG,
-                directory=os.path.expanduser('~'),
-                save_filename='cotacao_tarifas.xlsx'
-            )
-            
+            file_path_tuple = self._window.create_file_dialog(webview.SAVE_DIALOG, directory=os.path.expanduser('~'), save_filename='cotacao_tarifas.xlsx')
             if not file_path_tuple:
                 return {'success': False, 'message': 'Exportação cancelada.'}
-            
-            # This is the full path returned by the dialog
             user_choice = file_path_tuple[0]
-            
-            # --- NEW, SAFER LOGIC STARTS HERE ---
-            
-            # Get just the filename part of the path
             filename = os.path.basename(user_choice)
-
-            # Check if the chosen path is invalid (e.g., just a drive letter "C:")
             if not filename or ":" in filename:
-                # If the path is invalid, create a safe default path in the Downloads folder.
                 downloads_path = os.path.join(os.path.expanduser('~'), 'Downloads')
-                os.makedirs(downloads_path, exist_ok=True) # Ensure the folder exists
+                os.makedirs(downloads_path, exist_ok=True)
                 final_path = os.path.join(downloads_path, 'cotacao_tarifas.xlsx')
-                
             else:
-                # If the path is valid, use it. Just make sure it has the right extension.
                 final_path = user_choice
-                if not final_path.lower().endswith('.xlsx'):
-                    final_path += '.xlsx'
-
-            # --- SAFER LOGIC ENDS HERE ---
-                
-            # Use the final, guaranteed-safe path to save the file
+                if not final_path.lower().endswith('.xlsx'): final_path += '.xlsx'
             self.last_results_df.to_excel(final_path, index=False, engine='openpyxl')
-            
             return {'success': True, 'message': f'Sucesso! Arquivo salvo em: {final_path}'}
-
         except Exception as e:
             return {'success': False, 'message': f'Erro ao exportar: {e}'}
-            
-
 
 if __name__ == '__main__':
     api = Api()
@@ -1057,7 +1126,6 @@ if __name__ == '__main__':
         resizable=True
     )
     
-    # Use the new variable name with the underscore
     api._window = window
 
-    webview.start() # Added d
+    webview.start()
