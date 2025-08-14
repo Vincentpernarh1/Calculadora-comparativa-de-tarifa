@@ -1066,3 +1066,253 @@ if __name__ == '__main__':
     api._window = window
 
     webview.start() # Added d
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    #Sport extra data conversion and handling code
+
+    # -*- coding: utf-8 -*-
+"""
+This script transforms multiple Excel files from a specific wide format to a
+final pivoted format that matches the user's target image.
+
+It performs the following steps for each file:
+1. Opens a dialog box for the user to select a folder containing the Excel files.
+2. Iterates through each Excel file (.xlsx, .xls) in the selected folder.
+3. Reads the data from the first sheet of the file, prioritizing headers on the
+   first row, with a fallback to the third row.
+4. Identifies columns by their position (index) as requested.
+   - Column 1 (index 0) is treated as 'Veiculo'.
+   - Column 2 (index 1) is treated as 'Motoristas'.
+   - Columns 3+ (index 2+) are treated as the routes.
+5. Unpivots the raw data into a long format.
+6. Pivots the long-format data to create the required structure with a
+   multi-level column header (Veiculo, Motoristas).
+7. Saves this final pivoted data into a new Excel file, using the xlsxwriter
+   engine to manually create the merged headers and flat 'Origem'/'Destino'
+   columns.
+8. The new file has "_trans" appended to the original name.
+"""
+
+import pandas as pd
+import os
+import tkinter as tk
+from tkinter import filedialog, messagebox
+from itertools import groupby
+
+def select_folder():
+    """Opens a dialog to select a folder and returns its path."""
+    root = tk.Tk()
+    root.withdraw()  # Hide the main tkinter window
+    folder_path = filedialog.askdirectory(title="Selecione a pasta com os arquivos Excel")
+    return folder_path
+
+def process_and_pivot_data(file_path):
+    """
+    Reads a single Excel file, transforms it from wide to long,
+    and then pivots it to the final wide format as requested.
+    Returns the pivoted DataFrame.
+    """
+    try:
+        # Prioritize reading the first sheet with headers on the 1st row (index 0)
+        df = pd.read_excel(file_path, header=0, sheet_name=0)
+    except Exception:
+        # If that fails, try reading with headers on the 3rd row (index 2)
+        try:
+            df = pd.read_excel(file_path, header=2, sheet_name=0)
+        except Exception as e2:
+            raise Exception(f"Falha ao ler o arquivo. Verifique se o formato está correto. Erro: {e2}")
+
+    # --- Identify columns by position (index) ---
+    # Get the original names of the first two columns by their position
+    veiculo_col_name = df.columns[0]
+    motoristas_col_name = df.columns[1]
+    
+    # Rename columns internally based on their position for consistent processing
+    df.rename(columns={
+        veiculo_col_name: 'Veiculo',
+        motoristas_col_name: 'Motoristas'
+    }, inplace=True)
+    
+    # Forward-fill the 'Veiculo' column using the recommended ffill() method
+    df['Veiculo'] = df['Veiculo'].ffill()
+
+    # Identify the ID columns and the route columns for the melt operation
+    id_cols = ['Veiculo', 'Motoristas']
+    route_cols = df.columns[2:].tolist()
+
+    # Melt the dataframe to transform routes from columns to rows
+    melted_df = pd.melt(
+        df,
+        id_vars=id_cols,
+        value_vars=route_cols,
+        var_name='RotaCompleta',
+        value_name='Tarifa'
+    )
+
+    # Clean up the data
+    melted_df.dropna(subset=['Tarifa'], inplace=True)
+    melted_df['Tarifa'] = pd.to_numeric(melted_df['Tarifa'], errors='coerce')
+    melted_df.dropna(subset=['Tarifa'], inplace=True)
+    melted_df = melted_df[melted_df['Tarifa'] > 0]
+
+    # Before splitting, filter out any rows where the route format is invalid
+    melted_df = melted_df[melted_df['RotaCompleta'].astype(str).str.contains(' X ', na=False)]
+
+    # Split the 'RotaCompleta' column into 'Origem' and 'Destino'
+    try:
+        split_rota = melted_df['RotaCompleta'].str.split(' X ', n=1, expand=True)
+        melted_df['Origem'] = split_rota[0].str.strip()
+        melted_df['Destino'] = split_rota[1].str.strip()
+    except Exception as e:
+        raise Exception(f"Não foi possível dividir a coluna de rotas. Verifique se o formato é 'Origem X Destino'. Erro: {e}")
+
+    # Pivot the long table to get the desired final wide format
+    pivoted_df = melted_df.pivot_table(
+        index=['Origem', 'Destino'],
+        columns=['Veiculo', 'Motoristas'],
+        values='Tarifa'
+    )
+    
+    # Reset index to make 'Origem' and 'Destino' regular columns, preventing merged cells
+    pivoted_df.reset_index(inplace=True)
+
+    return pivoted_df
+
+def save_with_merged_headers(pivoted_df, output_path):
+    """
+    Saves the pivoted DataFrame to an Excel file with custom merged headers
+    using the XlsxWriter engine. This function manually writes the data to
+    avoid pandas limitations with MultiIndex columns.
+    """
+    writer = pd.ExcelWriter(output_path, engine='xlsxwriter')
+    workbook = writer.book
+    # Manually add the worksheet to prevent the 'Sheet1' KeyError
+    worksheet = workbook.add_worksheet()
+
+    # Define cell formats
+    header_format = workbook.add_format({
+        'bold': True, 'text_wrap': True, 'valign': 'top',
+        'fg_color': '#D7E4BC', 'border': 1, 'align': 'center'
+    })
+    cell_format = workbook.add_format({'border': 1})
+    
+    # --- Manually write the complex, merged multi-level headers ---
+    worksheet.write('A3', 'Origem', header_format)
+    worksheet.write('B3', 'Destino', header_format)
+    
+    col_offset = 2 
+    headers = pivoted_df.columns[col_offset:]
+    current_col = col_offset
+    
+    for veiculo, group in groupby(headers, key=lambda x: x[0]):
+        group_list = list(group)
+        num_motoristas = len(group_list)
+        
+        if num_motoristas > 1:
+            worksheet.merge_range(0, current_col, 0, current_col + num_motoristas - 1, veiculo, header_format)
+        else:
+            worksheet.write(0, current_col, veiculo, header_format)
+        
+        worksheet.merge_range(1, current_col, 1, current_col + num_motoristas - 1, 'Motorista(s)', header_format)
+
+        for i, header_tuple in enumerate(group_list):
+            motorista_value = header_tuple[1]
+            worksheet.write(2, current_col + i, motorista_value, header_format)
+        
+        current_col += num_motoristas
+
+    # --- Manually write the data row by row to avoid the error ---
+    # Start writing data from the 4th row (index 3)
+    start_row = 3
+    for row_num, row_data in pivoted_df.iterrows():
+        # Convert row data to a list of values
+        row_values = row_data.values.tolist()
+        for col_num, cell_value in enumerate(row_values):
+            # Replace pandas NaN with None for xlsxwriter
+            if pd.isna(cell_value):
+                cell_value = None
+            worksheet.write(start_row + row_num, col_num, cell_value, cell_format)
+
+    # Close the writer to save the file
+    writer.close()
+
+
+def main():
+    """
+    Main function to orchestrate folder selection, file processing,
+    and saving the results file by file with custom formatting.
+    """
+    try:
+        folder = select_folder()
+        if not folder:
+            print("Nenhuma pasta foi selecionada. O programa será encerrado.")
+            messagebox.showinfo("Encerrado", "Nenhuma pasta foi selecionada.")
+            return
+
+        files_in_folder = os.listdir(folder)
+        excel_files = [f for f in files_in_folder if f.endswith(('.xlsx', '.xls')) and not f.startswith('~')]
+
+        if not excel_files:
+            messagebox.showwarning("Aviso", "Nenhum arquivo Excel encontrado na pasta selecionada.")
+            return
+
+        print(f"Pasta selecionada: {folder}\n" + "-" * 30)
+        processed_count, error_count = 0, 0
+
+        for filename in excel_files:
+            if '_trans' in filename:
+                continue
+
+            file_path = os.path.join(folder, filename)
+            try:
+                print(f"Processando arquivo: {filename}...")
+                pivoted_df = process_and_pivot_data(file_path)
+                
+                base_name, extension = os.path.splitext(filename)
+                output_filename = f"{base_name}_trans{extension}"
+                output_path = os.path.join(folder, output_filename)
+                
+                save_with_merged_headers(pivoted_df, output_path)
+                
+                print(f"-> Arquivo transformado salvo como: {output_filename}")
+                processed_count += 1
+
+            except Exception as e:
+                error_count += 1
+                print(f"-> ERRO ao processar o arquivo {filename}: {e}")
+                messagebox.showerror("Erro de Processamento", f"Ocorreu um erro ao processar o arquivo:\n\n{filename}\n\nErro: {e}\n\nEste arquivo será ignorado.")
+
+        print("-" * 30)
+        if processed_count > 0:
+            success_message = f"{processed_count} arquivo(s) foram transformados com sucesso!"
+            if error_count > 0:
+                success_message += f"\n{error_count} arquivo(s) falharam."
+            messagebox.showinfo("Concluído", success_message)
+        else:
+            messagebox.showerror("Nenhum Resultado", "Nenhum arquivo foi processado com sucesso.")
+
+    except Exception as e:
+        print(f"Ocorreu um erro inesperado: {e}")
+        messagebox.showerror("Erro Inesperado", f"Ocorreu um erro inesperado no programa:\n\n{e}")
+
+if __name__ == "__main__":
+    main()
