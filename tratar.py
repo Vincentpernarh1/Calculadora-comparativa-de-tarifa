@@ -17,16 +17,21 @@ def process_and_pivot_data(file_path):
     e então o pivota para o formato largo final, conforme solicitado.
     Retorna o DataFrame pivotado.
     """
+
     try:
         # Prioriza a leitura da primeira planilha com cabeçalhos na 1ª linha (índice 0)
-        df = pd.read_excel(file_path, header=0, sheet_name=0)
+        if "FEDERAL" in file_path or "federal" in file_path:
+            df = pd.read_excel(file_path, header=0, sheet_name=1)
+        else:
+            df = pd.read_excel(file_path, header=0, sheet_name=0)
     except Exception:
         # Se isso falhar, tenta ler com cabeçalhos na 3ª linha (índice 2)
         try:
-            df = pd.read_excel(file_path, header=2, sheet_name=0)
+            df = pd.read_excel(file_path, header=1, sheet_name=0)
         except Exception as e2:
             raise Exception(f"Falha ao ler o arquivo. Verifique se o formato está correto. Erro: {e2}")
 
+   
     # --- Identifica colunas pela posição (índice) ---
     veiculo_col_name = df.columns[0]
     motoristas_col_name = df.columns[1]
@@ -41,6 +46,8 @@ def process_and_pivot_data(file_path):
     # --- Limpa a coluna 'Veiculo' ---
     df['Veiculo'] = df['Veiculo'].astype(str)
     text_to_remove_veiculo = ['- Um motorista', 'Um motorista', '-']
+   
+
     for text in text_to_remove_veiculo:
         df['Veiculo'] = df['Veiculo'].str.replace(text, '', regex=False)
     df['Veiculo'] = df['Veiculo'].str.strip()
@@ -59,6 +66,7 @@ def process_and_pivot_data(file_path):
         value_name='Tarifa'
     )
 
+  
     # Limpa os dados
     melted_df.dropna(subset=['Tarifa'], inplace=True)
     melted_df['Tarifa'] = pd.to_numeric(melted_df['Tarifa'], errors='coerce')
@@ -67,7 +75,9 @@ def process_and_pivot_data(file_path):
 
     # Limpa a string da rota antes de tentar dividi-la
 
-    print("Antes da limpeza, RotaCompleta:", melted_df['RotaCompleta'].unique())
+    # print("Antes da limpeza, RotaCompleta:", melted_df['RotaCompleta'].unique())
+
+
     melted_df['RotaCompleta'] = melted_df['RotaCompleta'].astype(str).str.replace('até', '-', regex=False)
 
     # Divide a coluna 'RotaCompleta' em 'Origem' e 'Destino'
@@ -212,7 +222,7 @@ def main():
                     continue
 
                 base_name, extension = os.path.splitext(filename)
-                output_filename = f"trans_{base_name}{extension}"
+                output_filename = f"{base_name}{extension}"
                 # --- MODIFICADO: Salva o arquivo na nova pasta de resultados ---
                 output_path = os.path.join(results_folder, output_filename)
                 
