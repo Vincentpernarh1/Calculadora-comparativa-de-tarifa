@@ -1,27 +1,3 @@
-# -*- coding: utf-8 -*-
-"""
-Este script transforma múltiplos arquivos Excel de um formato largo para um
-formato final pivotado que corresponde à imagem de destino do usuário.
-
-Ele executa os seguintes passos para cada arquivo:
-1. Abre uma caixa de diálogo para o usuário selecionar uma pasta contendo os arquivos Excel.
-2. Itera sobre cada arquivo Excel (.xlsx, .xls) na pasta selecionada.
-3. Lê os dados da primeira planilha do arquivo, priorizando cabeçalhos na
-   primeira linha, com um fallback para a terceira linha.
-4. Identifica as colunas por sua posição (índice), conforme solicitado.
-   - A Coluna 1 (índice 0) é tratada como 'Veiculo'.
-   - A Coluna 2 (índice 1) é tratada como 'Motoristas'.
-   - As Colunas 3+ (índice 2+) são tratadas como as rotas.
-5. Limpa as colunas 'Veiculo' e 'Destino' removendo textos especificados.
-6. Transforma os dados brutos para um formato longo (unpivot).
-7. Pivota os dados de formato longo para criar a estrutura necessária com um
-   cabeçalho de colunas de múltiplos níveis (Veiculo, Motoristas).
-8. Salva esses dados pivotados finais em um novo arquivo Excel, usando o motor
-   xlsxwriter para criar manualmente os cabeçalhos mesclados e as colunas
-   'Origem'/'Destino' planas.
-9. O novo arquivo tem "_trans" anexado ao nome original.
-"""
-
 import pandas as pd
 import os
 import tkinter as tk
