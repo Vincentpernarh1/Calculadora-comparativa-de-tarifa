@@ -181,6 +181,11 @@ def main():
             messagebox.showinfo("Encerrado", "Nenhuma pasta foi selecionada.")
             return
 
+        # --- NOVO: Define o caminho para a pasta de resultados ---
+        results_folder = os.path.join(folder, "Resultados")
+        # --- NOVO: Cria a pasta de resultados se ela não existir ---
+        os.makedirs(results_folder, exist_ok=True)
+
         files_in_folder = os.listdir(folder)
         excel_files = [f for f in files_in_folder if f.endswith(('.xlsx', '.xls')) and not f.startswith('~')]
 
@@ -192,7 +197,8 @@ def main():
         processed_count, error_count = 0, 0
 
         for filename in excel_files:
-            if '_trans' in filename:
+            # Modificado para evitar processar arquivos já transformados
+            if 'trans_' in filename:
                 continue
 
             file_path = os.path.join(folder, filename)
@@ -206,12 +212,14 @@ def main():
                     continue
 
                 base_name, extension = os.path.splitext(filename)
-                output_filename = f"{base_name}_trans{extension}"
-                output_path = os.path.join(folder, output_filename)
+                output_filename = f"trans_{base_name}{extension}"
+                # --- MODIFICADO: Salva o arquivo na nova pasta de resultados ---
+                output_path = os.path.join(results_folder, output_filename)
                 
                 save_with_merged_headers(pivoted_df, output_path)
                 
-                print(f"-> Arquivo transformado salvo como: {output_filename}")
+                # --- MODIFICADO: Mensagem de console atualizada ---
+                print(f"-> Arquivo transformado salvo em: {output_path}")
                 processed_count += 1
 
             except Exception as e:
@@ -221,7 +229,8 @@ def main():
 
         print("-" * 30)
         if processed_count > 0:
-            success_message = f"{processed_count} arquivo(s) foram transformados com sucesso!"
+            # --- MODIFICADO: Mensagem de sucesso atualizada ---
+            success_message = f"{processed_count} arquivo(s) foram transformados com sucesso!\n\nOs resultados foram salvos na pasta 'Resultados'."
             if error_count > 0:
                 success_message += f"\n{error_count} arquivo(s) falharam."
             messagebox.showinfo("Concluído", success_message)
