@@ -1051,6 +1051,15 @@ class Api:
                 mask = (df['Distancia'].notna()) & (df['Distancia'] > 0)
                 df.loc[mask, 'Tarifa Real'] = (new_distance * df.loc[mask, 'Tarifa']) / df.loc[mask, 'Distancia']
                 df.loc[mask, 'Distancia'] = new_distance
+        else:
+            if 'SPOTS' in fluxo_name.upper() and 'Distancia' in df.columns:
+                df['Distancia'] = pd.NA
+
+        # <<< START OF CORRECTION
+        # Filter out any results where the calculated tariff is 0
+        if 'Tarifa Real' in df.columns:
+            df = df[df['Tarifa Real'] > 0]
+        # <<< END OF CORRECTION
 
         # --- [NEW] Unified Final Processing, Sorting, and Column Arrangement ---
         
@@ -1083,8 +1092,6 @@ class Api:
             self.last_results_df['Tarifa'] = pd.to_numeric(self.last_results_df['Tarifa'], errors='coerce').round(2)
         
         return self.last_results_df.to_dict('records')
-    
-
 
     def export_to_excel(self):
         if self.last_results_df is None or self.last_results_df.empty:
