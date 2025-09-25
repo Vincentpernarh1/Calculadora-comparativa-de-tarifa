@@ -356,7 +356,7 @@ class Api:
                                     match = re.search(r'^(.*?)\s*até\s*(\d+)', destino_raw, re.IGNORECASE)
                                     if match:
                                         clean_destino = match.group(1).strip()
-                                        distancia_min, distancia_max = 0, int(match.group(2))
+                                        distancia_min, distancia_max = 1, int(match.group(2))
                         
                         # BUGGY LINE REMOVED: distancia_min, distancia_max = 0,0
 
@@ -367,8 +367,8 @@ class Api:
                             clean_destino = clean_destino.split(' ')[0].strip()
                             
                             # Set the distances to a default of 0
-                            distancia_min = 0
-                            distancia_max = 0
+                            distancia_min = 1
+                            distancia_max = 1
 
                         # Fallback: If parsing results in an empty destination, use Origem.
                         if not clean_destino:
