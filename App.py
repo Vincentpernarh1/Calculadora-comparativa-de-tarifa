@@ -6,6 +6,7 @@ import pandas as pd
 import tkinter as tk
 from tkinter import filedialog
 import openpyxl
+import numpy as np
 
 # --- Front-End User Interface (gui.html) ---
 HTML_CONTENT = """
@@ -120,7 +121,7 @@ HTML_CONTENT = """
                             </select>
                         </div>
                         <div>
-                            <label for="origem-select" class="block text-sm font-medium text-slate-700 mb-2">Cidade de Coleta</label>
+                            <label for="origem-select" class="block text-sm font-medium text-slate-700 mb-2">Origem</label>
                             <select id="origem-select" class="w-full p-1 bg-white border" disabled>
                                 <option>Selecione um fluxo</option>
                             </select>
@@ -132,7 +133,7 @@ HTML_CONTENT = """
                             </select>
                         </div>
                         <div>
-                            <label for="destino-select" class="block text-sm font-medium text-slate-700 mb-2">Destino Materiais</label>
+                            <label for="destino-select" class="block text-sm font-medium text-slate-700 mb-2">Destino</label>
                             <select id="destino-select" class="w-full p-1 bg-white border" disabled>
                                 <option>Selecione um fluxo</option>
                             </select>
@@ -477,22 +478,50 @@ HTML_CONTENT = """
 </html>
 """
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 # !------------------------------ API code and conditions -----------------------------------------!
 class Api:
+
+    
     def __init__(self):
         self.base_folder = None
         self.fluxo_data = {}
         self.last_results_df = None
         self._window = None
-
-
+    
+   
     def _parse_transporter_name(self, filename):
         """Extracts a cleaned-up transporter name from the filename."""
         match = re.search(r'_(.*?)\.', filename)
         if match:
             return match.group(1).replace('_', ' ').title()
         return os.path.splitext(filename)[0].replace('_', ' ').title()
-
+    
+    
     def select_folder(self):
         """Handles the main folder selection using pywebview's native dialog."""
         try:
@@ -524,11 +553,33 @@ class Api:
         Reads all Excel files in a given fluxo, processes them into a tidy (long) DataFrame,
         and returns the available filters for the UI.
         """
+
+
+
+        def normalize_vehicle_name(name):
+            """
+            Normalizes vehicle names by handling different spellings, cases, and variations,
+            while keeping distinct vehicle types separate.
+            """
+            if not name or not str(name).strip(): return None
+            clean_name = str(name).strip().upper()
+            if 'BITREM' in clean_name: return 'BITREM'
+            if 'VANDERLEIA' in clean_name: return 'VANDERLEIA'
+            if 'CARRETA' in clean_name: return 'CARRETA'
+            if 'VAN' in clean_name or 'DUCATO' in clean_name: return 'VAN'
+            if '3/4' in clean_name or '0.75' in clean_name: return '3/4'
+            if 'TOCO' in clean_name: return 'TOCO'
+            if 'TRUCK' in clean_name: return 'TRUCK'
+            if 'FIORINO' in clean_name: return 'FIORINO'
+            return clean_name
+
         if fluxo_name in self.fluxo_data:
             return self.fluxo_data[fluxo_name]['filters_response']
 
         fluxo_path = os.path.join(self.base_folder, fluxo_name)
         all_melted_dfs = []
+
+
 
 
         if '04. MILK RUN' in fluxo_name:
@@ -583,7 +634,7 @@ class Api:
                         else:
                             match = re.search(r'acima de\s*(\d+)', faixa_km_str, re.IGNORECASE)
                             if match:
-                                distancia_min, distancia_max = int(match.group(1)), float('inf')
+                                distancia_min, distancia_max = int(match.group(1)), float(200)
                             else:
                                 match = re.search(r'até\s*(\d+)', faixa_km_str, re.IGNORECASE)
                                 if match:
@@ -715,6 +766,15 @@ class Api:
                     print(f"Error processing file {file_path} for 'FAIXA': {e}")
                     continue
 
+
+
+
+
+
+
+
+
+
         # !------------------------------FLUXO SPOTS -----------------------------------------!
         elif 'SPOTS' in fluxo_name:
             for file_name in os.listdir(fluxo_path):
@@ -736,15 +796,12 @@ class Api:
                                 last_vehicle = vehicle_name
                         
                         if last_vehicle:
-                            # **[FIX]** More robustly parse the motorista value to ensure it's a number.
                             motorista_val_raw = sheet.cell(row=3, column=col_idx).value
                             if motorista_val_raw is not None:
                                 try:
-                                    # Clean and convert the value to an integer
                                     motorista_clean = int(float(str(motorista_val_raw).strip()))
                                     motorista_cols[col_idx] = (last_vehicle, motorista_clean)
                                 except (ValueError, TypeError):
-                                    # If conversion fails, it's not a valid motorista column, so skip it
                                     continue
 
                     header_map = {}
@@ -762,9 +819,57 @@ class Api:
                     
                     processed_rows = []
                     for row_idx in range(data_start_row, sheet.max_row + 1):
-                        origem = sheet.cell(row=row_idx, column=header_map['Origem']).value
-                        destino = sheet.cell(row=row_idx, column=header_map['Destino']).value
-                        if not origem or not destino: continue
+                        origem = str(sheet.cell(row=row_idx, column=header_map['Origem']).value or '').strip()
+                        destino_raw = str(sheet.cell(row=row_idx, column=header_map['Destino']).value or '').strip()
+                        if not origem or not destino_raw: continue
+
+                        # --- CORRECTED PARSING LOGIC ---
+                        distancia_min, distancia_max = None, None
+                        clean_destino = destino_raw
+
+                        # Scenario 1: "PE 01 KM - 10 Km" or "MG 11-20"
+                        match = re.search(r'^(.*?)\s*(\d+)\s*(?:km)?\s*-\s*(\d+)', destino_raw, re.IGNORECASE)
+                        if match:
+                            clean_destino = match.group(1).strip()
+                            distancia_min, distancia_max = int(match.group(2)), int(match.group(3))
+                        else:
+                            # Scenario 2: "De 21 km a 30 km" -> Destino becomes the same as Origem
+                            match = re.search(r'de\s*(\d+)\s*(?:a|-|até)\s*(\d+)', destino_raw, re.IGNORECASE)
+                            if match:
+                                distancia_min, distancia_max = int(match.group(1)), int(match.group(2))
+                                clean_destino = origem
+                            else:
+                                # Scenario 3: "BA acima 40 km"
+                                match = re.search(r'^(.*?)\s*acima (?:de)?\s*(\d+)', destino_raw, re.IGNORECASE)
+                                if match:
+                                    clean_destino = match.group(1).strip()
+                                    distancia_min, distancia_max = int(match.group(2)), float(200)
+                                else:
+                                    # Scenario 4: "SE até 40 km"
+                                    match = re.search(r'^(.*?)\s*até\s*(\d+)', destino_raw, re.IGNORECASE)
+                                    if match:
+                                        clean_destino = match.group(1).strip()
+                                        distancia_min, distancia_max = 0, int(match.group(2))
+                        
+                        # BUGGY LINE REMOVED: distancia_min, distancia_max = 0,0
+
+                        # --- FINAL CLEANUP & DEFAULTING ---
+                        # If no distance range was found after all checks, then we clean and default.
+                        if distancia_min is None:
+                            # Your logic to handle "MG 21" -> "MG"
+                            clean_destino = clean_destino.split(' ')[0].strip()
+                            
+                            # Set the distances to a default of 0
+                            distancia_min = 0
+                            distancia_max = 0
+
+                        # Fallback: If parsing results in an empty destination, use Origem.
+                        if not clean_destino:
+                            clean_destino = origem
+                        
+                        clean_destino  = clean_destino.split(' ')[0].strip()
+                        clean_destino  = clean_destino.split('(')[0].strip()
+
                         for col_idx, (vehicle, motorista) in motorista_cols.items():
                             tarifa = sheet.cell(row=row_idx, column=col_idx).value
                             if tarifa is not None and str(tarifa).strip() != "":
@@ -772,21 +877,19 @@ class Api:
                                     processed_rows.append({
                                         'Transportadora': self._parse_transporter_name(file_name),
                                         'Veiculo': vehicle, 'Motorista': motorista,
-                                        'Origem': str(origem).strip(), 'Destino': str(destino).strip(),
+                                        'Origem': origem,
+                                        'Destino': clean_destino,
+                                        'DistanciaMin': distancia_min,
+                                        'DistanciaMax': distancia_max,
                                         'Distancia': float(motorista),
                                         'Tarifa': float(tarifa),
                                         'Nomeacao': 'N/A', 'Fornecedor': 'N/A', 'LocalColeta': 'N/A', 'Viagem': 'N/A',
-                                        'Chave': f"{origem} & {destino}"
+                                        'Chave': f"{origem} & {clean_destino}"
                                     })
                                 except (ValueError, TypeError): continue
                     if processed_rows: all_melted_dfs.append(pd.DataFrame(processed_rows))
                 except Exception as e:
                     print(f"Error processing file {file_path} for 'SPOTS': {e}")
-        
-        
-        
-        
-        
         
         
         
@@ -960,7 +1063,8 @@ class Api:
             return {'success': False, 'message': 'Nenhum arquivo de tarifa válido foi encontrado.'}
 
         master_df = pd.concat(all_melted_dfs, ignore_index=True).dropna(subset=['Tarifa'])
-        
+        if 'Veiculo' in master_df.columns:
+            master_df['Veiculo'] = master_df['Veiculo'].apply(normalize_vehicle_name)
         # --- NEW & IMPROVED DATA CLEANING ---
         str_cols = ['Nomeacao', 'Fornecedor', 'Origem', 'Local Coleta', 'Destino', 'Veiculo', 'Viagem']
         for col in str_cols:
@@ -1009,6 +1113,9 @@ class Api:
 
    
 
+
+
+    # (Inside your Api class)
     def calculate_tariffs(self, params):
         fluxo_name = params['fluxo']
         if not fluxo_name or fluxo_name not in self.fluxo_data: return []
@@ -1030,6 +1137,9 @@ class Api:
             try: df = df[df['Motorista'] == int(params['motorista'])]
             except (ValueError, TypeError): pass
 
+        if 'Tarifa' in df.columns:
+            df = df[pd.to_numeric(df['Tarifa'], errors='coerce').fillna(0) > 0]
+
         if df.empty: return []
 
         # --- Perform Calculations ---
@@ -1040,58 +1150,76 @@ class Api:
 
         if new_distance:
             df['Tarifa Real'] = pd.NA
-            if ('FAIXA' in fluxo_name.upper() or 'MILK RUN' in fluxo_name.upper()) and 'DistanciaMin' in df.columns:
-                mask = (df['DistanciaMin'] <= new_distance) & (df['DistanciaMax'] >= new_distance)
-                if 'MILK RUN' in fluxo_name.upper():
-                    df.loc[mask, 'Tarifa Real'] = new_distance * df.loc[mask, 'Tarifa']
+            
+            is_range_based_fluxo = ('FAIXA' in fluxo_name.upper() or 'MILK RUN' in fluxo_name.upper() or 'SPOTS' in fluxo_name.upper()) and 'DistanciaMin' in df.columns
+
+            if is_range_based_fluxo:
+                range_mask = (df['DistanciaMin'] <= new_distance) & (df['DistanciaMax'] >= new_distance) & (df['DistanciaMax'] > 0)
+                
+                if range_mask.any():
+                    if 'MILK RUN' in fluxo_name.upper():
+                        df.loc[range_mask, 'Tarifa Real'] = new_distance * df.loc[range_mask, 'Tarifa']
+                    elif 'SPOTS' in fluxo_name.upper():
+                        df.loc[range_mask, 'Tarifa Real'] = (new_distance * df.loc[range_mask, 'Tarifa']) / df.loc[range_mask, 'Distancia']
+                        df.loc[range_mask, 'Distancia'] = new_distance
+                    else: # FAIXA
+                        df.loc[range_mask, 'Tarifa Real'] = df.loc[range_mask, 'Tarifa']
+                    
+                    df = df[range_mask].copy()
                 else:
-                    df.loc[mask, 'Tarifa Real'] = df.loc[mask, 'Tarifa']
-                df = df[mask].copy()
+                    if 'Distancia' in df.columns:
+                        fallback_mask = (df['DistanciaMin'] == 0) & (df['DistanciaMax'] == 0) & (df['Distancia'] > 0)
+                        df.loc[fallback_mask, 'Tarifa Real'] = (new_distance * df.loc[fallback_mask, 'Tarifa']) / df.loc[fallback_mask, 'Distancia']
+                        df.loc[fallback_mask, 'Distancia'] = new_distance
+                        df = df[fallback_mask].copy()
+                    else:
+                        df = df.iloc[0:0]
+
             elif 'Distancia' in df.columns:
+                # --- START OF FIX ---
+                # Before calculating, find the single best (cheapest) tariff for each unique route to avoid duplicates.
+                # A unique route is defined by Origin, Destination, Vehicle, and Transporter.
+                key_cols = ['Origem', 'Destino', 'Veiculo', 'Transportadora']
+
+                # Ensure all key columns exist before de-duplicating
+                if all(col in df.columns for col in key_cols):
+                    df = df.sort_values('Tarifa', ascending=True).drop_duplicates(subset=key_cols, keep='first')
+                # --- END OF FIX ---
+
                 mask = (df['Distancia'].notna()) & (df['Distancia'] > 0)
                 df.loc[mask, 'Tarifa Real'] = (new_distance * df.loc[mask, 'Tarifa']) / df.loc[mask, 'Distancia']
                 df.loc[mask, 'Distancia'] = new_distance
+                
         else:
             if 'SPOTS' in fluxo_name.upper() and 'Distancia' in df.columns:
                 df['Distancia'] = pd.NA
 
-        # <<< START OF CORRECTION
-        # Filter out any results where the calculated tariff is 0
         if 'Tarifa Real' in df.columns:
             df = df[df['Tarifa Real'] > 0]
-        # <<< END OF CORRECTION
 
-        # --- [NEW] Unified Final Processing, Sorting, and Column Arrangement ---
-        
-        # 1. Determine the primary column for sorting
+        # --- Final Processing and Return ---
         sort_col = 'Tarifa Real' if 'Tarifa Real' in df.columns and df['Tarifa Real'].notna().any() else 'Tarifa'
-
-        # 2. Sort the entire result set by the best tariff, lowest first
         df_sorted = df.sort_values(by=sort_col, ascending=True)
 
-        # 3. Define the exact columns and order for the final display
-        final_display_cols = [
-            'Origem',
-            'Destino',
-            'Veiculo',
-            'Motorista',
-            'Transportadora',
-            'Distancia',
-            'Tarifa',
-            'Tarifa Real'
-        ]
+        base_display_cols = ['Origem','Destino','Veiculo','Motorista','Transportadora','DistanciaMin','DistanciaMax','Distancia','Tarifa']
+        final_display_cols = base_display_cols.copy()
+        if new_distance:
+            final_display_cols.append('Tarifa Real')
 
-        # 4. Select only the columns that exist in the current dataframe
         existing_cols = [col for col in final_display_cols if col in df_sorted.columns]
         self.last_results_df = df_sorted[existing_cols].copy()
 
-        # 5. Round the tariff columns just before returning
+        self.last_results_df.rename(columns={'DistanciaMin': 'Dist. Mín','DistanciaMax': 'Dist. Máx','Transportadora': 'Transp.'}, inplace=True)
+
         if 'Tarifa Real' in self.last_results_df.columns:
             self.last_results_df['Tarifa Real'] = pd.to_numeric(self.last_results_df['Tarifa Real'], errors='coerce').round(2)
         if 'Tarifa' in self.last_results_df.columns:
             self.last_results_df['Tarifa'] = pd.to_numeric(self.last_results_df['Tarifa'], errors='coerce').round(2)
         
-        return self.last_results_df.to_dict('records')
+        df_for_json = self.last_results_df.replace([np.inf, -np.inf, np.nan], None)
+        
+        return df_for_json.to_dict('records')
+
 
     def export_to_excel(self):
         if self.last_results_df is None or self.last_results_df.empty:
