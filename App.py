@@ -661,7 +661,7 @@ class Api:
                     df = df[range_mask].copy()
                 else:
                     if 'Distancia' in df.columns:
-                        fallback_mask = (df['DistanciaMin'] == 0) & (df['DistanciaMax'] == 0) & (df['Distancia'] > 0)
+                        fallback_mask = (df['DistanciaMin'] == 1) & (df['DistanciaMax'] == 1) & (df['Distancia'] > 0)
                         df.loc[fallback_mask, 'Tarifa Real'] = (new_distance * df.loc[fallback_mask, 'Tarifa']) / df.loc[fallback_mask, 'Distancia']
                         df.loc[fallback_mask, 'Distancia'] = new_distance
                         df = df[fallback_mask].copy()
