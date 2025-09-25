@@ -479,30 +479,6 @@ HTML_CONTENT = """
 """
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 # !------------------------------ API code and conditions -----------------------------------------!
 class Api:
 
@@ -766,15 +742,6 @@ class Api:
                     print(f"Error processing file {file_path} for 'FAIXA': {e}")
                     continue
 
-
-
-
-
-
-
-
-
-
         # !------------------------------FLUXO SPOTS -----------------------------------------!
         elif 'SPOTS' in fluxo_name:
             for file_name in os.listdir(fluxo_path):
@@ -890,17 +857,6 @@ class Api:
                     if processed_rows: all_melted_dfs.append(pd.DataFrame(processed_rows))
                 except Exception as e:
                     print(f"Error processing file {file_path} for 'SPOTS': {e}")
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
-        
         else:
 
             # --- ORIGINAL Logic for '01', '03', etc. ---
@@ -1112,9 +1068,6 @@ class Api:
         return response
 
    
-
-
-
     # (Inside your Api class)
     def calculate_tariffs(self, params):
         fluxo_name = params['fluxo']
